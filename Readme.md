@@ -35,10 +35,6 @@ cd walmart chatbot
 pip install -r requirements.txt
 ```
 
-```sh
-pip install -r requirements.txt
-```
-
 Create a `.env` file in the root directory of the project and add your API keys:
 
 ```env
@@ -85,7 +81,7 @@ GROQ_API_KEY=your_stripe_api_key
 ```
 
 ```sh
-python /srcipts/create_database.py
+python scripts/create_database.py
 ```
 
 ```sh
