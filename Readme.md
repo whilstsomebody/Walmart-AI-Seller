@@ -54,6 +54,28 @@ python main.py
 
 The assistant is programmed to stop the conversation when the user says "goodbye".
 
+#### Important end-points
+
+- initial message (must be call at first of every new conversation.)
+
+```sh
+GET: http://localhost:8000/chat/message
+```
+
+- For further conversations
+
+```sh
+
+Content-Type: application/json
+
+POST: http://localhost:8000/chat/message
+```
+
+- For resetting conversations and starting new ones.
+
+```sh
+POST: http://localhost:8000/chat/reset
+```
 
 ### Walmart Voice
 
