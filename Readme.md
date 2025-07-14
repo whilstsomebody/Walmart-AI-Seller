@@ -49,7 +49,7 @@ Follow Google's documentation to set up credentials for Calendar, Contacts, and 
 
 
 ```sh
-python main.py
+uvicorn src.api.app:app --reload
 ```
 
 The assistant is programmed to stop the conversation when the user says "goodbye".
