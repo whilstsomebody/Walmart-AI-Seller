@@ -12,3 +12,5 @@ instructor
 stripe
 colorama
 python-dotenv
+aiosqlite
+langsmith

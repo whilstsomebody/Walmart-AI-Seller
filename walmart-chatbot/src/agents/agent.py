@@ -1,5 +1,7 @@
 from colorama import Fore, init
 from litellm import completion
+import json
+import re
 
 # Initialize colorama for colored terminal output
 init(autoreset=True)
@@ -27,126 +29,165 @@ class Agent:
         if self.system_prompt and not self.messages:
             self.handle_messages_history("system", self.system_prompt)
 
-    def invoke(self, message):
+    async def get_response(self, message):
+        if re.search(r"goodbye|bye", message, re.IGNORECASE):
+            return "Goodbye! If you have any more questions, feel free to ask later."
         print(Fore.GREEN + f"\nCalling Agent: {self.name}")
         self.handle_messages_history("user", message)
-        result = self.execute()
+        result = await self.execute()
         return result
 
-    def execute(self):
+    async def execute(self):
         """
         @notice Use LLM to generate a response and handle tool calls if needed.
         @return The final response.
         """
-        # First, call the AI to get a response
-        response_message = self.call_llm()
-
-        # Check if there are tool calls in the response
-        tool_calls = response_message.tool_calls
-
-        # If there are tool calls, invoke them
-        if tool_calls:
-            response_message = self.run_tools(tool_calls)
-            
-        return response_message.content
-
-    def run_tools(self, tool_calls):
-        """
-        @notice Runs the necessary tools based on the tool calls from the LLM response.
-        @param tool_calls The list of tool calls from the LLM response.
-        @return The final response from the LLM after processing tool calls.
-        """
-        # For each tool the AI wanted to call, call it and add the tool result to the list of messages
-        for tool_call in tool_calls:
-            self.execute_tool(tool_call)
-
-        # Call the AI again so it can produce a response with the result of calling the tool(s)
-        response_message = self.call_llm()
-        tool_calls = response_message.tool_calls
-
-        # If the AI decided to invoke a tool again, invoke it
-        if tool_calls:
-            response_message = self.run_tools(tool_calls)
-
-        return response_message
-
-    def execute_tool(self, tool_call):
-        """
-        @notice Executes a tool based on the tool call from the LLM response.
-        @param tool_call The tool call from the LLM response.
-        @return The final response from the LLM after executing the tool.
-        """
-        function_name = tool_call.function.name
-        func = next(
-            iter([func for func in self.tools if func.__name__ == function_name])
-        )
-
-        if not func:
-            return f"Error: Function {function_name} not found. Available functions: {[func.__name__ for func in self.tools]}"
-
         try:
-            print(Fore.GREEN + f"\nCalling Tool: {function_name}")
-            print(Fore.GREEN + f"Arguments: {tool_call.function.arguments}\n")
-            # init tool
-            func = func(**eval(tool_call.function.arguments))
-            # get outputs from the tool
-            output = func.run()
+            # First, call the AI to get a response
+            response = completion(
+                model=self.model,
+                messages=self.messages,
+                tools=self.tools_schemas,
+                tool_choice="auto"
+            )
             
-            tool_message = {"name": function_name, "tool_call_id": tool_call.id}
-            self.handle_messages_history("tool", output, tool_output=tool_message)
+            # Extract the message from the response
+            response_message = response.choices[0].message
             
-            return output
+            # Check if the message has tool calls
+            tool_calls = getattr(response_message, 'tool_calls', None)
+            
+            if tool_calls:
+                # Handle tool calls
+                final_response = await self.run_tools(tool_calls)
+                return getattr(final_response, 'content', str(final_response))
+            else:
+                # Return the direct message content
+                return getattr(response_message, 'content', str(response_message))
+                
         except Exception as e:
-            print("Error: ", str(e))
-            return "Error: " + str(e)
+            print(Fore.RED + f"Error in execute: {str(e)}")
+            return f"I apologize, but I encountered an error: {str(e)}"
 
     def call_llm(self):
-        response = completion(
-            model=self.model,
-            messages=self.messages,
-            tools=self.tools_schemas,
-            temperature=0.1,
-        )
-        message = response.choices[0].message
-        if message.tool_calls is None:
-            message.tool_calls = []
-        if message.function_call is None:
-            message.function_call = {}
-        self.handle_messages_history(
-            "assistant", message.content, tool_calls=message.tool_calls
-        )
-        return message
+        """
+        @notice Call the LLM to get a response.
+        @return The response from the LLM.
+        """
+        try:
+            response = completion(
+                model=self.model,
+                messages=self.messages,
+                tools=self.tools_schemas,
+                tool_choice="auto"
+            )
+            return response.choices[0].message
+        except Exception as e:
+            print(Fore.RED + f"Error in LLM call: {str(e)}")
+            return {"content": f"I apologize, but I encountered an error: {str(e)}"}
 
-    def reset(self):
-        self.messages = []
-        if self.system_prompt:
-            self.messages.append({"role": "system", "content": self.system_prompt})
-            
-    def get_openai_tools_schema(self):
-        return [
-            {"type": "function", "function": tool.openai_schema} for tool in self.tools
-        ]
-            
-    def handle_messages_history(self, role, content, tool_calls=None, tool_output=None):
-        message = {"role": role, "content": content}
-        if tool_calls:
-            message["tool_calls"] = self.parse_tool_calls(tool_calls)
-        if tool_output:
-            message["name"] = tool_output["name"]
-            message["tool_call_id"] = tool_output["tool_call_id"]
-        # save short-term memory
+    async def run_tools(self, tool_calls):
+        """
+        @notice Run the tools called by the LLM.
+        @param tool_calls The tool calls from the LLM response.
+        @return The final response after running the tools.
+        """
+        # Add the assistant's response with tool calls to the message history
+        self.handle_messages_history(
+            "assistant",
+            None,
+            tool_calls=tool_calls,
+        )
+
+        # Process each tool call
+        for tool_call in tool_calls:
+            try:
+                # Find the corresponding tool
+                tool_name = tool_call.function.name
+                tool = next(
+                    (t for t in self.tools if t.name == tool_name),
+                    None,
+                )
+
+                if tool:
+                    # Execute the tool
+                    args = tool_call.function.arguments
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except json.JSONDecodeError:
+                            pass
+                            
+                    result = await tool.execute(args)
+                    
+                    # Add the tool's response to the message history
+                    self.handle_messages_history(
+                        "tool",
+                        str(result),
+                        tool_call_id=tool_call.id,
+                        name=tool_name,
+                    )
+                else:
+                    print(Fore.RED + f"Tool {tool_name} not found")
+
+            except Exception as e:
+                print(Fore.RED + f"Error executing tool {tool_name}: {str(e)}")
+                self.handle_messages_history(
+                    "tool",
+                    str(e),
+                    tool_call_id=tool_call.id,
+                    name=tool_name,
+                )
+
+        # Get the final response from the LLM
+        final_response = self.call_llm()
+        content = getattr(final_response, 'content', str(final_response))
+        self.handle_messages_history("assistant", content)
+        
+        return final_response
+
+    def handle_messages_history(
+        self, role, content=None, tool_calls=None, tool_call_id=None, name=None
+    ):
+        """
+        @notice Handle the message history by adding new messages.
+        @param role The role of the message sender.
+        @param content The content of the message.
+        @param tool_calls Any tool calls in the message.
+        @param tool_call_id The ID of the tool call.
+        @param name The name of the tool.
+        """
+        message = {"role": role}
+
+        if content is not None:
+            message["content"] = content
+
+        if tool_calls is not None:
+            message["tool_calls"] = tool_calls
+
+        if tool_call_id is not None:
+            message["tool_call_id"] = tool_call_id
+
+        if name is not None:
+            message["name"] = name
+
         self.messages.append(message)
 
-    def parse_tool_calls(self, calls):
-        parsed_calls = []
-        for call in calls:
-            parsed_call = {
-                "function": {
-                    "name": call.function.name,
-                    "arguments": call.function.arguments,
-                },
-                "id": call.id,
-                "type": call.type,
-            }
-            parsed_calls.append(parsed_call)
-        return parsed_calls
+    def get_openai_tools_schema(self):
+        """
+        @notice Get the schema of available tools in OpenAI format.
+        @return A list of tool schemas.
+        """
+        if not self.tools:
+            return None
+
+        tools_list = []
+        for tool in self.tools:
+            if hasattr(tool, 'get_schema'):
+                tools_list.append(
+                    {
+                        "type": "function",
+                        "function": tool.get_schema(),
+                    }
+                )
+        return tools_list

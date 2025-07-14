@@ -1,4 +1,5 @@
 import litellm
+import asyncio
 from colorama import Fore
 from dotenv import load_dotenv
 from src.agents.agent import Agent
@@ -41,15 +42,22 @@ agent.messages.append(
     }
 )
 
-print(
-    Fore.BLUE
-    + "Enter discussion with Walmart Sales Agent! Type 'exit' to end the conversation."
-)
-print(Fore.BLUE + f"Sales Bot: {agent.messages[-1]['content']}")
-while True:
-    user_input = input(Fore.YELLOW + "You: ")
-    if user_input.lower() == "exit":
-        print(Fore.BLUE + "Walmart Sales Agent: Goodbye!")
-        break
-    response = agent.invoke(user_input)
-    print(Fore.BLUE + f"Walmart Sales Agent: {response}")
+async def main():
+    print(
+        Fore.BLUE
+        + "Enter discussion with Walmart Sales Agent! Type 'exit' to end the conversation."
+    )
+    print(Fore.BLUE + f"Walmart Sales Agent: {agent.messages[-1]['content']}")
+    while True:
+        user_input = input(Fore.YELLOW + "You: ")
+        if user_input.lower() == "exit":
+            print(Fore.BLUE + "Walmart Sales Agent: Goodbye! Thank you for shopping with Walmart. Have a great day!")
+            break
+        response = await agent.get_response(user_input)
+        print(Fore.BLUE + f"Walmart Sales Agent: {response}")
+        
+        if "goodbye" in response.lower():
+            break;
+
+if __name__ == "__main__":
+    asyncio.run(main())

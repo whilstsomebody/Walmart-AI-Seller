@@ -4,8 +4,15 @@ from typing import Any
 
 class BaseTool(ABC, OpenAISchema):
     @abstractmethod
-    def run(self):
+    async def run(self):
         pass
+    
+    async def execute(self, args_str: str):
+        """
+        Executes the tool with the provided arguments.
+        """
+        args = self.model_validate_json(args_str)
+        return await args.run()
     
     # Remove "title" field for all tools parameters
     class Config:
